@@ -74,4 +74,4 @@ parts:
     plugin: dump
     source: skels
     organize:
-      '*': htp-skels/
+      '*': usr/share/qcom/htp/
