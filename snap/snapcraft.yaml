@@ -3,22 +3,16 @@ version: "2.46.0"
 summary: Qualcomm Hexagon HTP runtime provider for inference snaps
 description: |
   Runtime content provider implementing the inference-npu-runtime-qcom-htp-v1
-  contract. Ships the Qualcomm FastRPC userspace libraries (libcdsprpc,
-  libadsprpc, default listeners) required by the Hexagon backend ABI, the
-  QCS8300/QCM6490 DSP configuration tree that FastRPC reads from the absolute
-  /usr/share/qcom path, and the HTP DSP skeleton libraries (libggml-htp-v*.so)
-  the llama.cpp Hexagon backend loads by name via ADSP_LIBRARY_PATH.
+  contract. Ships the FastRPC userspace libraries (libcdsprpc, libadsprpc,
+  default listeners) required by the Hexagon backend ABI and the QCS8300/QCM6490
+  DSP configuration tree that FastRPC reads from the absolute /usr/share/qcom
+  path (bound into consumers via a layout).
 
-  Inference snaps (e.g. gemma4) consume this through the versioned content
-  interface. The inference-npu custom-device slot itself belongs to the
-  platform gadget; this snap only provides the versioned runtime content.
-
-  Source debs are fetched at build time from the public Qualcomm IoT PPA
-  (ppa:ubuntu-qcom-iot/qcom-ppa) - no proprietary binaries are committed to
-  this repository.
+  The inference-npu custom-device slot itself belongs to the platform gadget
+  (see platform-npu-access-spec.md section 3.2); this snap only provides the
+  versioned runtime content.
 
 base: core24
-license: Apache-2.0
 confinement: strict
 grade: devel
 platforms:
@@ -33,81 +27,49 @@ slots:
     read:
       - $SNAP/usr/share/qcom
       - $SNAP/htp-skels
-      - $SNAP/lib
+      - $SNAP
 
 layout:
-  # FastRPC reads its machine configuration from the absolute /usr/share/qcom
-  # path. The provider owns this bind so consumer snaps must NOT bind the same
-  # path (snapd would rename the content mount to avoid the clash and break
-  # the documented library paths).
+  # FastRPC hardcodes the absolute /usr/share/qcom path for its DSP config.
   /usr/share/qcom:
     bind: $SNAP/usr/share/qcom
 
 parts:
-  # Qualcomm FastRPC userland + DMA-BUF heap allocator + OpenMP runtime.
-  # Pulled at build time from the public Qualcomm IoT PPA; versions are
-  # recorded in debs/versions.txt for reproducibility.
   fastrpc-libs:
     plugin: dump
     source: .
-    override-pull: |
-      set -euo pipefail
-      craftctl default
-      # Fetch the exact deb versions recorded in the repo (fall back to latest
-      # from the PPA if absent, and refresh the record).
-      mkdir -p debs
-      if [ -f debs/versions.txt ] && [ -n "$(ls debs/*.deb 2>/dev/null)" ]; then
-        echo "Using pinned debs from debs/"
-      else
-        echo "deb [trusted=yes] https://ppa.launchpadcontent.net/ubuntu-qcom-iot/qcom-ppa/ubuntu noble main" > /etc/apt/sources.list.d/qcom-ppa.list
-        apt-get update -qq
-        cd debs
-        apt-get download qcom-fastrpc1 qcom-libdmabufheap libgomp1
-        cd ..
-        rm -f /etc/apt/sources.list.d/qcom-ppa.list
-        ls debs/*.deb | xargs -n1 dpkg-deb -f | true
-      fi
     override-build: |
-      set -euo pipefail
-      craftctl default
+      set -eo pipefail
       mkdir -p extract
-      for d in "$SNAPCRAFT_PART_SRC"/debs/*.deb; do
+      for d in /root/project/*.deb; do
         [ -e "$d" ] || continue
         dpkg -x "$d" extract/
       done
       mkdir -p "$CRAFT_PART_INSTALL"
       cp -a extract/usr/lib/aarch64-linux-gnu/. "$CRAFT_PART_INSTALL/"
-      # FastRPC daemons (cdsprpcd et al), shipped in bin/
       if [ -d extract/usr/sbin ]; then
         mkdir -p "$CRAFT_PART_INSTALL/bin"
         cp -a extract/usr/sbin/. "$CRAFT_PART_INSTALL/bin/"
       fi
-      # llama.cpp dlopen()s the unversioned name; ship the symlink
+      # llama.cpp dlopen()s "libcdsprpc.so" (unversioned); ship the symlink
       ln -sf libcdsprpc.so.1.0.0 "$CRAFT_PART_INSTALL/libcdsprpc.so"
       ln -sf libadsprpc.so.1.0.0 "$CRAFT_PART_INSTALL/libadsprpc.so"
-      # static archives are dead weight
       find "$CRAFT_PART_INSTALL" -name "*.a" -delete
+      find "$CRAFT_PART_INSTALL" -name "*.so" -exec sh -c 'b="${1%.so}"; [ -e "${b}.so.1" ] || [ -e "${b}.so.1.0.0" ] || rm -f "$1"' _ {} \; 2>/dev/null || true
     organize:
       libcdsprpc.so: lib/
       libadsprpc.so: lib/
-    stage-packages:
-      - libstdc++6
-      - libgcc-s1
 
-  # DSP configuration tree (firmware-side config FastRPC reads from
-  # /usr/share/qcom). Source: qairt-dsp-binaries package. Run fetch-dsp.sh
-  # once on a Dragonwing device or with PPA access to populate this dir;
-  # the tree is committed because it is small (~50 MB) and stable.
   dsp-config:
     plugin: dump
     source: dsp-config
     organize:
       "*": usr/share/qcom/
 
-  # HTP DSP skeleton libraries (libggml-htp-v68..v81.so), one per Hexagon
-  # version, loaded by name via ADSP_LIBRARY_PATH. These are llama.cpp build
-  # artifacts (from canonical/llama.cpp-builds hexagon builds); committed as
-  # they are small (~2.4 MB total) and must match the llama.cpp backend ABI.
+  # HTP skels the llama.cpp Hexagon backend loads by name via
+  # ADSP_LIBRARY_PATH (one per Hexagon version). Without these on the DSP
+  # path FastRPC session open fails with err 114. Consumed via the
+  # inference-npu-runtime-qcom-htp content contract.
   htp-skels:
     plugin: dump
     source: skels
