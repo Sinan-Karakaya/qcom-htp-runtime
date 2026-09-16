@@ -53,6 +53,9 @@ jobs:
       # NOTE: requires the 'qcom-htp-runtime' store name to be registered and
       # the STORE_LOGIN secret (snapcraft export-login output) added to this
       # repo. Until then this job is expected to fail at the publish step.
+      - name: Install snapcraft
+        run: sudo snap install snapcraft --classic
+
       - name: Publish to store (edge)
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.STORE_LOGIN }}
