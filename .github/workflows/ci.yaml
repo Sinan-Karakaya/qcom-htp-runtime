@@ -1,0 +1,66 @@
+name: qcom-htp-runtime CI/CD
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Qualcomm debs from public PPA
+        run: |
+          set -euo pipefail
+          # Skip if the exact pinned debs are committed in debs/
+          if [ -n "$(ls debs/*.deb 2>/dev/null)" ]; then
+            echo "Using pinned debs from repo"
+          else
+            echo "deb [trusted=yes] https://ppa.launchpadcontent.net/ubuntu-qcom-iot/qcom-ppa/ubuntu noble main" \
+              | sudo tee /etc/apt/sources.list.d/qcom-ppa.list
+            sudo apt-get update -qq
+            mkdir -p debs && cd debs
+            apt-get download qcom-fastrpc1 qcom-libdmabufheap libgomp1
+          fi
+
+      - name: Build snap
+        uses: canonical/actions/build-snap@v1
+        with:
+          snapcraft-channel: 9.x/stable
+          snapcraft-args: ${{ github.event_name == 'pull_request' && '--output qcom-htp-runtime_test.snap' || '' }}
+
+      - name: Upload build artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qcom-htp-runtime-arm64
+          path: qcom-htp-runtime_test.snap
+
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: store
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: snapcraft-artifacts-${{ github.run_id }}
+
+      # NOTE: requires the 'qcom-htp-runtime' store name to be registered and
+      # the STORE_LOGIN secret (snapcraft export-login) to be added to the
+      # repo environment. Until then this job is expected to fail.
+      - name: Publish to store (edge)
+        uses: canonical/actions/publish-snap@v1
+        with:
+          snapcraft-channel: 9.x/stable
+          store-credentials: STORE_LOGIN
+          snap-name: qcom-htp-runtime
+          store-channel: edge

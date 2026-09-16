@@ -1,0 +1,5 @@
+# Pinned deb versions used by the fastrpc-libs part (fetched from ppa:ubuntu-qcom-iot/qcom-ppa if not committed)
+# qcom-fastrpc1 1.0.15+repack2
+# qcom-libdmabufheap 1.1.0+250131+rel1.0+nmu1
+# libgomp1 14.2.0-4ubuntu2~24.04.1
+Package: libgomp1	Version: 14.2.0-4ubuntu2~24.04.1
